@@ -1,18 +1,14 @@
 from flask import Flask, request, jsonify
-import pickle
-import numpy as np
-import os
+from flask_cors import CORS
+import joblib
+import pandas as pd
 
 app = Flask(__name__)
+CORS(app)
 
-# Load the trained model
-try:
-    model_path = os.path.join(os.path.dirname(__file__), 'loan_model.pkl')
-    with open(model_path, "rb") as model_file:
-        model = pickle.load(model_file)
-    print("✅ Model loaded successfully!")
-except Exception as e:
-    print(f"❌ Error loading model: {e}")
+# Load the model and scaler
+model = joblib.load('loan_approval_model.pkl')
+scaler = joblib.load('scaler.pkl')
 
 @app.route("/", methods=["GET"])
 def home():
@@ -24,50 +20,39 @@ def predict():
     """ API endpoint to predict loan approval """
     try:
         data = request.get_json()
-
-        # Ensure all required fields are present
-        required_fields = [
-            "Gender", "Married", "Dependents", "Education", "Self_Employed",
-            "ApplicantIncome", "CoapplicantIncome", "LoanAmount",
-            "Loan_Amount_Term", "Credit_History", "Property_Area"
-        ]
-        if not all(field in data for field in required_fields):
-            return jsonify({"error": "Missing required fields"}), 400
-
-        # Preprocess input data
-        processed_data = {
-            "Gender": 1 if data["Gender"].lower() == "male" else 0,
-            "Married": 1 if data["Married"].lower() == "yes" else 0,
-            "Dependents": int(data["Dependents"]),
-            "Education": 1 if data["Education"].lower() == "graduate" else 0,
-            "Self_Employed": 1 if data["Self_Employed"].lower() == "yes" else 0,
-            "ApplicantIncome": float(data["ApplicantIncome"]),
-            "CoapplicantIncome": float(data["CoapplicantIncome"]),
-            "LoanAmount": float(data["LoanAmount"]),
-            "Loan_Amount_Term": float(data["Loan_Amount_Term"]),
-            "Credit_History": float(data["Credit_History"]),
-            "Property_Area": {"urban": 2, "semiurban": 1, "rural": 0}.get(data["Property_Area"].lower(), 1)
-        }
-
-        # Convert input into the required format
-        input_features = np.array([processed_data[field] for field in required_fields]).reshape(1, -1)
-
-        # Make prediction
-        prediction = model.predict(input_features)
-        probability = model.predict_proba(input_features)[0][1]  # Probability of approval
         
-        result = "Approved" if prediction[0] == 1 else "Rejected"
+        # Extract features in the correct order
+        input_data = {
+            'Gender': 1 if data['gender'] == 'Male' else 0,
+            'Marital_Status': 1 if data['marital_status'] == 'Married' else 0,
+            'Dependents': int(data['dependents']),
+            'Education_Level': 1 if data['education'] == 'Graduate' else 0,
+            'Employment_Status': 1 if data['employment_status'] == 'Salaried' else 0,
+            'Monthly_Income': float(data['monthly_income']),
+            'Co_Applicant_Income': float(data['co_applicant_income']),
+            'Loan_Amount': float(data['loan_amount']),
+            'Loan_Term': int(data['loan_term']),
+            'Credit_History': 1 if data['credit_history'] == 'Good' else 0,
+            'Property_Area': {'Urban': 0, 'Semiurban': 1, 'Rural': 2}[data['property_area']]
+        }
+        
+        # Convert to DataFrame
+        input_df = pd.DataFrame([input_data])
+        
+        # Scale the input data
+        input_scaled = scaler.transform(input_df)
+        
+        # Make prediction
+        prediction = model.predict(input_scaled)[0]
+        probability = model.predict_proba(input_scaled)[0][1]
         
         return jsonify({
-            "loan_approval": result,
-            "approval_probability": float(probability),
-            "input_features": processed_data
+            'approved': bool(prediction),
+            'probability': float(probability)
         })
-
-    except ValueError as e:
-        return jsonify({"error": f"Invalid input data: {str(e)}"}), 400
+        
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)}), 400
 
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=5000)
